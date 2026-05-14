@@ -18,7 +18,11 @@ def main() -> None:
 
     result = run_pipeline(args.pdf, args.output, use_groq=args.groq, groq_api_key=args.groq_api_key)
     print(f"Done: {result['output_dir']}")
-    for file_name in result["files"]:
+    print("\nArquivos para anexar ao Claude:")
+    for file_name in result["claude_files"]:
+        print(f"- {file_name}")
+    print("\nAuditoria local:")
+    for file_name in result["audit_files"]:
         print(f"- {file_name}")
 
 

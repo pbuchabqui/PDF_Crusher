@@ -10,8 +10,8 @@ O projeto faz somente pré-processamento técnico:
 - preserva rastreabilidade por página no texto bruto;
 - aplica máscara local em CPF, CNPJ, e-mail e telefone;
 - opcionalmente usa Groq para substituir nomes de pessoas por `[NOME_ANONIMIZADO]`;
-- gera relatório técnico, JSON de estrutura e auditoria;
-- cria blocos prontos para colagem em ChatGPT/Claude, com cabeçalho de contexto em cada parte.
+- gera um **Claude Pack** com poucos arquivos para anexação direta;
+- mantém relatório técnico, JSON de estrutura e auditoria em pasta separada para conferência local.
 
 O projeto **não interpreta decisões**, **não define teses jurídicas**, **não cria critérios decisórios** e **não realiza cálculos**.
 
@@ -19,39 +19,53 @@ O projeto **não interpreta decisões**, **não define teses jurídicas**, **nã
 
 ## Saídas geradas
 
+A saída principal agora é o **Claude Pack**, para reduzir a quantidade de anexos.
+
 ```text
 outputs/
-├── processo_higienizado.md
-├── guia_uso_llm.md
-├── texto_extraido_bruto.txt
-├── estrutura_pdf.json
-├── auditoria_pdf.json
-├── auditoria_privacidade.json
-├── relatorio_preprocessamento_pdf.md
-└── chunks/
-    ├── parte_001.md
-    ├── parte_002.md
-    └── ...
+├── claude/
+│   ├── PDF_CRUSHER_CONTEXT.md
+│   └── PDF_CRUSHER_MANIFEST.json
+└── auditoria/
+    ├── processo_higienizado.md
+    ├── texto_extraido_bruto.txt
+    ├── estrutura_pdf.json
+    ├── auditoria_pdf.json
+    ├── auditoria_privacidade.json
+    └── relatorio_preprocessamento_pdf.md
+```
+
+Se o contexto ficar grande demais para um único arquivo, o PDF_Crusher gera volumes:
+
+```text
+outputs/claude/
+├── PDF_CRUSHER_CONTEXT_001.md
+├── PDF_CRUSHER_CONTEXT_002.md
+├── PDF_CRUSHER_CONTEXT_003.md
+└── PDF_CRUSHER_MANIFEST.json
 ```
 
 ---
 
 ## Contexto otimizado para LLM
 
-Cada arquivo em `chunks/` recebe um cabeçalho com:
+Em uso normal, anexe ao Claude apenas os arquivos em `outputs/claude/`.
 
-- número da parte;
-- arquivo original;
+Cada `PDF_CRUSHER_CONTEXT*.md` contém:
+
+- identificação do arquivo original;
 - escopo jurídico: direito brasileiro em geral;
 - idioma preferencial: português brasileiro;
-- total de páginas;
-- tipo técnico do PDF;
+- resumo técnico do PDF;
 - confiança global;
 - alertas técnicos;
+- auditoria resumida;
+- auditoria de privacidade;
 - páginas candidatas a decisões, petições/manifestações, provas/documentos, atas/audiências, cálculos e documentos trabalhistas;
-- instrução para a LLM aguardar os próximos blocos ou consolidar no último bloco.
+- instruções para uso com a skill `pdf-crusher-context-reader`;
+- conteúdo extraído e higienizado.
 
-O arquivo `guia_uso_llm.md` traz prompts sugeridos para a primeira e para a última mensagem.
+Os arquivos em `outputs/auditoria/` são para conferência local e não precisam ser anexados ao Claude no fluxo comum.
 
 ---
 
@@ -89,7 +103,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-A interface permite processar o PDF, baixar os arquivos principais e copiar cada bloco já preparado para ChatGPT ou Claude.
+A interface permite processar o PDF e baixar diretamente os arquivos mínimos do Claude Pack.
 
 ---
 
@@ -135,7 +149,7 @@ Incluído:
 - detecção preliminar de páginas candidatas a decisões, petições/manifestações, provas/documentos, audiências, cálculos e documentos trabalhistas;
 - busca simples de sumário/índice processual nas páginas finais;
 - relatório e JSON técnico;
-- chunking para LLM com cabeçalho de contexto em português brasileiro.
+- Claude Pack com poucos arquivos de contexto em português brasileiro.
 
 Fora do MVP:
 
@@ -164,7 +178,7 @@ Para uso no Claude, faça upload do arquivo:
 pdf-crusher-context-reader-skill.zip
 ```
 
-Depois anexe os arquivos gerados pelo PDF_Crusher e peça:
+Depois anexe os arquivos da pasta `outputs/claude/` e peça:
 
 ```text
 Use a skill pdf-crusher-context-reader para analisar os arquivos anexos do PDF_Crusher em português brasileiro.

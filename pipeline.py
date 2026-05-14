@@ -12,8 +12,8 @@ from preprocess import build_preprocess, write_preprocess_outputs
 from privacy_engine import mask_structured_data
 
 
-LLM_CHUNK_CHARS = 65000
 GROQ_CHUNK_CHARS = 30000
+CLAUDE_CONTEXT_CHARS = 180000
 
 
 def _pages_with_type(structure: dict, label: str) -> list[int]:
@@ -24,7 +24,7 @@ def _pages_with_type(structure: dict, label: str) -> list[int]:
     ]
 
 
-def _format_pages(pages: list[int], limit: int = 30) -> str:
+def _format_pages(pages: list[int], limit: int = 40) -> str:
     if not pages:
         return "nenhuma detectada"
     shown = ", ".join(str(page) for page in pages[:limit])
@@ -33,7 +33,11 @@ def _format_pages(pages: list[int], limit: int = 30) -> str:
     return shown
 
 
-def _chunk_header(index: int, total: int, structure: dict) -> str:
+def _alert_lines(alerts: list[str]) -> str:
+    return "\n".join(f"- {alert}" for alert in alerts) if alerts else "- Nenhum alerta crítico no pré-processamento."
+
+
+def _claude_header(structure: dict, privacy_audit: dict, volume: int, total: int) -> str:
     cls = structure["classificacao_tecnica"]
     audit = structure["auditoria"]
     alerts = structure.get("alertas", [])
@@ -45,26 +49,27 @@ def _chunk_header(index: int, total: int, structure: dict) -> str:
     calc_pages = _pages_with_type(structure, "possível cálculo/demonstrativo")
     labor_pages = _pages_with_type(structure, "possível documento trabalhista")
 
-    next_instruction = (
-        "Este não é o último bloco. Apenas absorva o contexto, mantenha a ordem cronológica e aguarde os próximos blocos antes de concluir."
-        if index < total
-        else "Este é o último bloco. Após ler, consolide a resposta usando todos os blocos anteriores."
-    )
+    title = "PDF_CRUSHER_CONTEXT" if total == 1 else f"PDF_CRUSHER_CONTEXT — VOLUME {volume:03d} DE {total:03d}"
 
-    return f"""# CONTEXTO LLM — PARTE {index:03d} DE {total:03d}
+    return f"""# {title}
 
-## Metadados do arquivo
+## 1. Identificação
 
 - Arquivo original: {structure['arquivo']['nome']}
 - Escopo jurídico: {structure.get('escopo_juridico', 'direito brasileiro em geral')}
 - Idioma preferencial: {structure.get('idioma_preferencial', 'português brasileiro')}
+- Volume: {volume} de {total}
+
+## 2. Resumo técnico
+
 - Páginas totais: {audit['paginas_totais']}
 - Tipo técnico do PDF: {cls['tipo_pdf']}
 - Confiança global: {cls['confianca_global']}
 - Necessita OCR/conferência adicional: {cls['necessita_ocr']}
 - Sumário/índice processual detectado: {structure['sumario']['detectado']}
+- Groq usado para nomes: {privacy_audit['groq_usado_para_nomes']}
 
-## Páginas candidatas detectadas no PDF inteiro
+## 3. Páginas candidatas detectadas
 
 - Possíveis decisões judiciais: {_format_pages(decision_pages)}
 - Possíveis petições/manifestações/recursos: {_format_pages(petition_pages)}
@@ -73,80 +78,88 @@ def _chunk_header(index: int, total: int, structure: dict) -> str:
 - Possíveis cálculos/demonstrativos: {_format_pages(calc_pages)}
 - Possíveis documentos trabalhistas: {_format_pages(labor_pages)}
 
-## Alertas técnicos
+## 4. Alertas técnicos
 
-{chr(10).join(f'- {alert}' for alert in alerts) if alerts else '- Nenhum alerta crítico no pré-processamento.'}
+{_alert_lines(alerts)}
 
-## Instrução para a LLM
+## 5. Auditoria resumida
 
-Você receberá autos ou documentos jurídicos brasileiros em partes. Use português brasileiro jurídico, preserve termos técnicos e trate este bloco como contexto documental preliminar, não como transcrição definitiva.
-Não invente dados ausentes. Não trate página candidata como decisão confirmada. Quando houver baixa confiança, ressalve a necessidade de conferência humana.
-{next_instruction}
+```json
+{json.dumps(audit, ensure_ascii=False, indent=2)}
+```
+
+## 6. Auditoria de privacidade
+
+```json
+{json.dumps(privacy_audit, ensure_ascii=False, indent=2)}
+```
+
+## 7. Instrução para Claude
+
+Use a skill `pdf-crusher-context-reader` para ler este arquivo.
+Responda em português brasileiro jurídico.
+Trate este conteúdo como extração técnica preliminar, não como transcrição definitiva.
+Não invente dados ausentes.
+Não trate página candidata como decisão confirmada.
+Não use petições, argumentos das partes, cálculos das partes ou jurisprudência citada como se fossem decisão do processo.
+Quando houver OCR, baixa confiança ou ausência de origem clara, ressalve a necessidade de conferência humana.
 
 ---
 
+## 8. Conteúdo extraído e higienizado
+
 """
 
 
-def _manifest(structure: dict, total_chunks: int) -> str:
-    cls = structure["classificacao_tecnica"]
-    audit = structure["auditoria"]
-    return f"""# Guia de Uso do Contexto em LLM Web
+def _write_claude_pack(final_text: str, structure: dict, privacy_audit: dict, output_dir: Path) -> list[str]:
+    claude_dir = output_dir / "claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
 
-Use os arquivos de `chunks/` em ordem: `parte_001.md`, `parte_002.md`, etc.
+    for old_file in claude_dir.glob("PDF_CRUSHER_CONTEXT*.md"):
+        old_file.unlink()
+    manifest_path = claude_dir / "PDF_CRUSHER_MANIFEST.json"
+    if manifest_path.exists():
+        manifest_path.unlink()
 
-Cada parte contém um cabeçalho com metadados, alertas e páginas candidatas. O conteúdo é preliminar e deve ser conferido quando usado para fins jurídicos ou periciais.
-
-## Resumo técnico
-
-- Arquivo: {structure['arquivo']['nome']}
-- Escopo jurídico: {structure.get('escopo_juridico', 'direito brasileiro em geral')}
-- Idioma preferencial: {structure.get('idioma_preferencial', 'português brasileiro')}
-- Páginas totais: {audit['paginas_totais']}
-- Tipo técnico: {cls['tipo_pdf']}
-- Confiança global: {cls['confianca_global']}
-- Partes geradas: {total_chunks}
-- Sumário/índice processual detectado: {structure['sumario']['detectado']}
-
-## Prompt sugerido para a primeira mensagem
-
-```text
-Vou enviar um processo ou conjunto de documentos jurídicos brasileiros em partes. Cada parte terá cabeçalho técnico e conteúdo documental higienizado.
-Use português brasileiro jurídico. Não responda conclusivamente até eu informar que enviei a última parte.
-Ao receber cada parte, apenas confirme a assimilação e registre pontos relevantes para posterior consolidação.
-```
-
-## Prompt sugerido para a última mensagem
-
-```text
-Esta foi a última parte. Agora consolide a análise considerando todos os blocos enviados, preservando cautela quanto a OCR, páginas candidatas e trechos de baixa confiança.
-```
-"""
-
-
-def _write_llm_chunks(text: str, structure: dict, output_dir: Path) -> int:
-    chunks_dir = output_dir / "chunks"
-    chunks_dir.mkdir(exist_ok=True)
-
-    for old_chunk in chunks_dir.glob("parte_*.md"):
-        old_chunk.unlink()
-
-    chunks = split_text(text, LLM_CHUNK_CHARS)
+    chunks = split_text(final_text, CLAUDE_CONTEXT_CHARS)
     total = len(chunks)
-    for index, chunk in enumerate(chunks, start=1):
-        content = _chunk_header(index, total, structure) + chunk.strip() + "\n"
-        (chunks_dir / f"parte_{index:03d}.md").write_text(content, encoding="utf-8")
+    files: list[str] = []
 
-    (output_dir / "guia_uso_llm.md").write_text(_manifest(structure, total), encoding="utf-8")
-    return total
+    for index, chunk in enumerate(chunks, start=1):
+        if total == 1:
+            name = "PDF_CRUSHER_CONTEXT.md"
+        else:
+            name = f"PDF_CRUSHER_CONTEXT_{index:03d}.md"
+        content = _claude_header(structure, privacy_audit, index, total) + chunk.strip() + "\n"
+        (claude_dir / name).write_text(content, encoding="utf-8")
+        files.append(f"claude/{name}")
+
+    manifest = {
+        "modo_saida": "claude_pack",
+        "descricao": "Arquivos mínimos para anexar ao Claude.",
+        "arquivos_para_anexar": files,
+        "quantidade_arquivos_contexto": total,
+        "arquivo_original": structure["arquivo"]["nome"],
+        "escopo_juridico": structure.get("escopo_juridico", "direito brasileiro em geral"),
+        "idioma_preferencial": structure.get("idioma_preferencial", "português brasileiro"),
+        "confianca_global": structure["classificacao_tecnica"]["confianca_global"],
+        "usar_skill": "pdf-crusher-context-reader",
+        "prompt_sugerido": "Use a skill pdf-crusher-context-reader para analisar os arquivos PDF_CRUSHER_CONTEXT anexados, em português brasileiro jurídico.",
+        "observacao": "Os demais arquivos ficam na pasta auditoria/ para conferência local e não precisam ser anexados ao Claude em uso normal.",
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    files.append("claude/PDF_CRUSHER_MANIFEST.json")
+    return files
 
 
 def run_pipeline(pdf_path: str | Path, output_dir: str | Path, use_groq: bool = False, groq_api_key: str | None = None) -> dict:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
+    audit_dir = out / "auditoria"
+    audit_dir.mkdir(exist_ok=True)
 
     structure, raw_text = build_preprocess(pdf_path)
-    write_preprocess_outputs(out, structure, raw_text)
+    write_preprocess_outputs(audit_dir, structure, raw_text)
 
     markdown = extract_markdown_docling(pdf_path)
 
@@ -162,30 +175,30 @@ def run_pipeline(pdf_path: str | Path, output_dir: str | Path, use_groq: bool = 
     final_pass = mask_structured_data(text)
     final_text = final_pass.text
 
-    (out / "processo_higienizado.md").write_text(final_text, encoding="utf-8")
-    chunk_count = _write_llm_chunks(final_text, structure, out)
+    (audit_dir / "processo_higienizado.md").write_text(final_text, encoding="utf-8")
 
     privacy_audit = {
         "regex_primeira_passada": first_pass.counts,
         "regex_passada_final": final_pass.counts,
         "groq_usado_para_nomes": use_groq,
-        "chunks_llm_gerados": chunk_count,
-        "tamanho_maximo_conteudo_por_chunk": LLM_CHUNK_CHARS,
+        "tamanho_maximo_por_arquivo_claude": CLAUDE_CONTEXT_CHARS,
     }
-    (out / "auditoria_privacidade.json").write_text(json.dumps(privacy_audit, ensure_ascii=False, indent=2), encoding="utf-8")
+    (audit_dir / "auditoria_privacidade.json").write_text(json.dumps(privacy_audit, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    claude_files = _write_claude_pack(final_text, structure, privacy_audit, out)
 
     return {
         "output_dir": str(out),
         "structure": structure,
         "privacy_audit": privacy_audit,
-        "files": [
-            "processo_higienizado.md",
-            "guia_uso_llm.md",
-            "texto_extraido_bruto.txt",
-            "estrutura_pdf.json",
-            "auditoria_pdf.json",
-            "auditoria_privacidade.json",
-            "relatorio_preprocessamento_pdf.md",
-            "chunks/",
+        "claude_files": claude_files,
+        "audit_files": [
+            "auditoria/processo_higienizado.md",
+            "auditoria/texto_extraido_bruto.txt",
+            "auditoria/estrutura_pdf.json",
+            "auditoria/auditoria_pdf.json",
+            "auditoria/auditoria_privacidade.json",
+            "auditoria/relatorio_preprocessamento_pdf.md",
         ],
+        "files": claude_files,
     }
