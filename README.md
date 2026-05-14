@@ -145,7 +145,7 @@ Use com revisão humana. Este projeto reduz risco, mas não garante anonimizaç�
 Incluído:
 
 - extração por página com `pypdf`;
-- extração Markdown com Docling;
+- extração Markdown com Docling, sem OCR automático no pipeline padrão;
 - detecção preliminar de páginas candidatas a decisões, petições/manifestações, provas/documentos, audiências, cálculos e documentos trabalhistas;
 - busca simples de sumário/índice processual nas páginas finais;
 - relatório e JSON técnico;
@@ -195,3 +195,4 @@ Este projeto inclui dois arquivos para reduzir falhas comuns no deploy com Docli
 - `.streamlit/config.toml`: desativa o file watcher do Streamlit para evitar inspeção excessiva de módulos pesados como `transformers` durante o deploy.
 
 No Streamlit Community Cloud, recomenda-se selecionar Python 3.12 nas configurações avançadas do app. PDFs grandes e OCR continuam sendo mais seguros em execução local.
+PDFs escaneados ou sem camada de texto podem exigir OCR externo antes do uso no app web.

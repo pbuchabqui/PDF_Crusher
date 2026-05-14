@@ -5,7 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from docling.document_converter import DocumentConverter
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
 from pypdf import PdfReader
 
 
@@ -27,5 +29,14 @@ def extract_page_texts(pdf_path: str | Path) -> list[str]:
 
 
 def extract_markdown_docling(pdf_path: str | Path) -> str:
-    result = DocumentConverter().convert(str(pdf_path))
+    pipeline_options = PdfPipelineOptions()
+    pipeline_options.do_ocr = False
+    pipeline_options.do_table_structure = False
+
+    converter = DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+        }
+    )
+    result = converter.convert(str(pdf_path))
     return result.document.export_to_markdown()
