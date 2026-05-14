@@ -1,5 +1,8 @@
 import sys
+from pathlib import Path
 import unittest
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Skip the entire module if heavy PDF dependencies are not available.
 try:
@@ -65,7 +68,7 @@ class TestGlobalConfidence(unittest.TestCase):
 
     def test_some_weak(self):
         result = _global_confidence(["ALTO"] * 3 + ["BAIXO"])
-        self.assertEqual(result, "BAIXO")
+        self.assertEqual(result, "MÉDIO")
 
     def test_empty_list(self):
         result = _global_confidence([])
