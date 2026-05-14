@@ -191,7 +191,7 @@ A skill agora é geral para o direito brasileiro. O antigo modo trabalhista foi 
 
 Este projeto inclui dois arquivos para reduzir falhas comuns no deploy com Docling/OpenCV:
 
-- `packages.txt`: instala a biblioteca Linux que fornece `libGL.so.1`, necessária para dependências que usam OpenCV.
+- `packages.txt`: instala as bibliotecas Linux que fornecem `libGL.so.1` e `libgthread-2.0.so.0`, necessárias para dependências que usam OpenCV no runtime atual do Streamlit.
 - `.streamlit/config.toml`: desativa o file watcher do Streamlit para evitar inspeção excessiva de módulos pesados como `transformers` durante o deploy.
 
 No Streamlit Community Cloud, recomenda-se selecionar Python 3.12 nas configurações avançadas do app. PDFs grandes e OCR continuam sendo mais seguros em execução local.
