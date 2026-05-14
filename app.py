@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 import logging
+import os
 import tempfile
 from pathlib import Path
+
+# Force CPU-only mode and set a writable cache dir for transformers/huggingface
+# on Streamlit Community Cloud (no GPU, limited /home space).
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+os.environ.setdefault("TRANSFORMERS_CACHE", "/tmp/hf_cache")
+os.environ.setdefault("HF_HOME", "/tmp/hf_cache")
 
 import streamlit as st
 
