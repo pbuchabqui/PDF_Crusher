@@ -7,7 +7,7 @@ from pathlib import Path
 
 from chunker import split_text
 from groq_anonymizer import anonymize_names
-from pdf_engine import extract_markdown_docling
+from pdf_engine import extract_markdown
 from preprocess import build_preprocess, write_preprocess_outputs
 from privacy_engine import mask_structured_data
 
@@ -161,7 +161,7 @@ def run_pipeline(pdf_path: str | Path, output_dir: str | Path, use_groq: bool = 
     structure, raw_text = build_preprocess(pdf_path)
     write_preprocess_outputs(audit_dir, structure, raw_text)
 
-    markdown = extract_markdown_docling(pdf_path)
+    markdown = extract_markdown(pdf_path)
 
     first_pass = mask_structured_data(markdown)
     text = first_pass.text

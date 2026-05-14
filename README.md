@@ -95,6 +95,13 @@ Depois:
 pip install -r requirements.txt
 ```
 
+Opcionalmente, para usar o extrator Docling em execução local:
+
+```bash
+pip install docling
+PDF_CRUSHER_EXTRACTOR=docling streamlit run app.py
+```
+
 ---
 
 ## Uso pela interface
@@ -145,7 +152,8 @@ Use com revisão humana. Este projeto reduz risco, mas não garante anonimizaç�
 Incluído:
 
 - extração por página com `pypdf`;
-- extração Markdown com Docling, sem OCR automático no pipeline padrão;
+- geração de contexto em Markdown a partir do texto extraído por `pypdf`;
+- extração Markdown com Docling como modo local opcional;
 - detecção preliminar de páginas candidatas a decisões, petições/manifestações, provas/documentos, audiências, cálculos e documentos trabalhistas;
 - busca simples de sumário/índice processual nas páginas finais;
 - relatório e JSON técnico;
@@ -189,10 +197,9 @@ A skill agora é geral para o direito brasileiro. O antigo modo trabalhista foi 
 
 ## Deploy no Streamlit Community Cloud
 
-Este projeto inclui dois arquivos para reduzir falhas comuns no deploy com Docling/OpenCV:
+O deploy web usa `pypdf` por padrão para evitar download de modelos pesados e escrita em diretórios sem permissão.
 
-- `packages.txt`: instala as bibliotecas Linux que fornecem `libGL.so.1` e `libgthread-2.0.so.0`, necessárias para dependências que usam OpenCV no runtime atual do Streamlit.
-- `.streamlit/config.toml`: desativa o file watcher do Streamlit para evitar inspeção excessiva de módulos pesados como `transformers` durante o deploy.
+O projeto inclui `.streamlit/config.toml`, que desativa o file watcher do Streamlit para evitar inspeção excessiva de módulos pesados durante o deploy.
 
 No Streamlit Community Cloud, recomenda-se selecionar Python 3.12 nas configurações avançadas do app. PDFs grandes e OCR continuam sendo mais seguros em execução local.
 PDFs escaneados ou sem camada de texto podem exigir OCR externo antes do uso no app web.
