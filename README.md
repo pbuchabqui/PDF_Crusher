@@ -1,3 +1,14 @@
+---
+title: PDF Crusher
+emoji: ⚡
+colorFrom: yellow
+colorTo: orange
+sdk: gradio
+sdk_version: "4.44.0"
+app_file: app_gradio.py
+pinned: false
+---
+
 # ⚡ PDF_Crusher
 
 Ferramenta local em Python para transformar PDFs jurídicos densos em contexto higienizado, fracionado e mais digerível para uso em LLMs via web, com foco no **direito brasileiro** e em **português brasileiro**.
