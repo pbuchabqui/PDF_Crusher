@@ -1,9 +1,0 @@
-[server]
-fileWatcherType = "none"
-maxUploadSize = 200
-
-[client]
-maxMessageSize = 200
-
-[runner]
-fastReruns = true
