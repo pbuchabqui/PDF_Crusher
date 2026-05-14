@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from chunker import split_text
@@ -14,6 +16,60 @@ from preprocess import build_preprocess, write_preprocess_outputs
 from privacy_engine import mask_structured_data
 
 logger = logging.getLogger(__name__)
+
+
+def _mask_chunk(chunk: str) -> dict:
+    """Mask privacy data in a single chunk. Used for parallel processing."""
+    result = mask_structured_data(chunk)
+    return {"text": result.text, "counts": result.counts}
+
+
+def _mask_text_parallel(text: str, max_workers: int = 4, chunk_size: int = 50000) -> tuple[str, dict]:
+    """Mask privacy data in parallel chunks for faster processing.
+
+    Args:
+        text: Full text to mask
+        max_workers: Number of parallel workers
+        chunk_size: Size of each chunk in characters
+
+    Returns:
+        Tuple of (masked_text, aggregated_counts)
+    """
+    # Split into chunks
+    chunks = split_text(text, chunk_size)
+
+    if len(chunks) <= 1:
+        # Single chunk, no need to parallelize
+        result = mask_structured_data(text)
+        return result.text, result.counts
+
+    logger.info(f"Masking {len(chunks)} chunks in parallel (max_workers={max_workers})...")
+    start_time = time.time()
+
+    # Process chunks in parallel
+    try:
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(_mask_chunk, chunks))
+
+        # Recombine text
+        masked_text = "\n\n".join(r["text"] for r in results)
+
+        # Aggregate counts
+        aggregated_counts = {}
+        for result in results:
+            for key, value in result["counts"].items():
+                aggregated_counts[key] = aggregated_counts.get(key, 0) + value
+
+        elapsed = time.time() - start_time
+        logger.info(f"Parallel masking complete in {elapsed:.1f}s: {aggregated_counts}")
+
+        return masked_text, aggregated_counts
+
+    except Exception as e:
+        # Fall back to single-threaded processing
+        logger.warning(f"Parallel processing failed ({e}), falling back to sequential...")
+        result = mask_structured_data(text)
+        return result.text, result.counts
 
 
 def _pages_with_type(structure: dict, label: str) -> list[int]:
@@ -176,34 +232,57 @@ def run_pipeline(
     audit_dir.mkdir(exist_ok=True)
 
     logger.info("Starting pipeline for: %s", pdf_path)
+    pipeline_start = time.time()
 
+    # Step 1: Preprocess
+    step_start = time.time()
     structure, raw_text = build_preprocess(pdf_path)
     write_preprocess_outputs(audit_dir, structure, raw_text)
-    logger.info("Preprocessing complete. Pages: %d", structure["auditoria"]["paginas_totais"])
+    logger.info("Preprocessing complete. Pages: %d (%.1fs)",
+               structure["auditoria"]["paginas_totais"], time.time() - step_start)
 
+    # Step 2: Extract text with Docling (most expensive step)
+    step_start = time.time()
     markdown = extract_markdown_docling(pdf_path)
-    logger.info("Text extraction complete. Chars: %d", len(markdown))
+    logger.info("Text extraction complete. Chars: %d (%.1fs)", len(markdown), time.time() - step_start)
 
-    first_pass = mask_structured_data(markdown)
-    text = first_pass.text
-    logger.info("First privacy pass: %s", first_pass.counts)
+    # Step 3: First privacy pass (parallel if text is large)
+    step_start = time.time()
+    if len(markdown) > 100000:  # Only parallelize large documents
+        text, first_pass_counts = _mask_text_parallel(markdown, max_workers=4)
+        logger.info("First privacy pass (parallel): %s (%.1fs)", first_pass_counts, time.time() - step_start)
+    else:
+        first_pass = mask_structured_data(markdown)
+        text = first_pass.text
+        first_pass_counts = first_pass.counts
+        logger.info("First privacy pass: %s (%.1fs)", first_pass_counts, time.time() - step_start)
 
+    # Step 4: Groq anonymization (if enabled)
     if config.use_groq:
+        step_start = time.time()
         logger.info("Running Groq name anonymization...")
         chunks = split_text(text, config.groq_chunk_chars)
         pieces = [anonymize_names(chunk, config.groq_api_key, model=config.groq_model) for chunk in chunks]
         text = "\n\n".join(pieces)
-        logger.info("Groq anonymization complete. %d chunk(s) processed.", len(chunks))
+        logger.info("Groq anonymization complete. %d chunk(s) processed. (%.1fs)",
+                   len(chunks), time.time() - step_start)
 
-    final_pass = mask_structured_data(text)
-    final_text = final_pass.text
-    logger.info("Final privacy pass: %s", final_pass.counts)
+    # Step 5: Final privacy pass (parallel if text is large)
+    step_start = time.time()
+    if len(text) > 100000:  # Only parallelize large documents
+        final_text, final_pass_counts = _mask_text_parallel(text, max_workers=4)
+        logger.info("Final privacy pass (parallel): %s (%.1fs)", final_pass_counts, time.time() - step_start)
+    else:
+        final_pass = mask_structured_data(text)
+        final_text = final_pass.text
+        final_pass_counts = final_pass.counts
+        logger.info("Final privacy pass: %s (%.1fs)", final_pass_counts, time.time() - step_start)
 
     (audit_dir / "processo_higienizado.md").write_text(final_text, encoding="utf-8")
 
     privacy_audit = {
-        "regex_primeira_passada": first_pass.counts,
-        "regex_passada_final": final_pass.counts,
+        "regex_primeira_passada": first_pass_counts,
+        "regex_passada_final": final_pass_counts,
         "groq_usado_para_nomes": config.use_groq,
         "tamanho_maximo_por_arquivo_claude": config.claude_context_chars,
     }
@@ -212,7 +291,8 @@ def run_pipeline(
     )
 
     claude_files = _write_claude_pack(final_text, structure, privacy_audit, out, config)
-    logger.info("Pipeline complete. Claude files: %s", claude_files)
+    total_elapsed = time.time() - pipeline_start
+    logger.info("Pipeline complete in %.1f seconds. Claude files: %s", total_elapsed, claude_files)
 
     return {
         "output_dir": str(out),
