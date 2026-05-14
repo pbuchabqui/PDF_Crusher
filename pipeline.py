@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from chunker import split_text
+from config import PipelineConfig
 from groq_anonymizer import anonymize_names
 from pdf_engine import extract_markdown_docling
 from preprocess import build_preprocess, write_preprocess_outputs
 from privacy_engine import mask_structured_data
 
-
-GROQ_CHUNK_CHARS = 30000
-CLAUDE_CONTEXT_CHARS = 180000
+logger = logging.getLogger(__name__)
 
 
 def _pages_with_type(structure: dict, label: str) -> list[int]:
@@ -111,7 +111,7 @@ Quando houver OCR, baixa confiança ou ausência de origem clara, ressalve a nec
 """
 
 
-def _write_claude_pack(final_text: str, structure: dict, privacy_audit: dict, output_dir: Path) -> list[str]:
+def _write_claude_pack(final_text: str, structure: dict, privacy_audit: dict, output_dir: Path, config: PipelineConfig) -> list[str]:
     claude_dir = output_dir / "claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
 
@@ -121,7 +121,7 @@ def _write_claude_pack(final_text: str, structure: dict, privacy_audit: dict, ou
     if manifest_path.exists():
         manifest_path.unlink()
 
-    chunks = split_text(final_text, CLAUDE_CONTEXT_CHARS)
+    chunks = split_text(final_text, config.claude_context_chars)
     total = len(chunks)
     files: list[str] = []
 
@@ -133,6 +133,7 @@ def _write_claude_pack(final_text: str, structure: dict, privacy_audit: dict, ou
         content = _claude_header(structure, privacy_audit, index, total) + chunk.strip() + "\n"
         (claude_dir / name).write_text(content, encoding="utf-8")
         files.append(f"claude/{name}")
+        logger.info("Wrote %s (%d chars)", name, len(content))
 
     manifest = {
         "modo_saida": "claude_pack",
@@ -152,40 +153,66 @@ def _write_claude_pack(final_text: str, structure: dict, privacy_audit: dict, ou
     return files
 
 
-def run_pipeline(pdf_path: str | Path, output_dir: str | Path, use_groq: bool = False, groq_api_key: str | None = None) -> dict:
+def run_pipeline(
+    pdf_path: str | Path,
+    output_dir: str | Path,
+    config: PipelineConfig | None = None,
+    # Legacy keyword arguments kept for backwards compatibility
+    use_groq: bool = False,
+    groq_api_key: str | None = None,
+) -> dict:
+    """Run the full PDF_Crusher pipeline.
+
+    Accepts either a ``PipelineConfig`` object or the legacy ``use_groq`` /
+    ``groq_api_key`` keyword arguments (which are wrapped into a config internally).
+    """
+    if config is None:
+        config = PipelineConfig(use_groq=use_groq, groq_api_key=groq_api_key)
+    config.validate()
+
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     audit_dir = out / "auditoria"
     audit_dir.mkdir(exist_ok=True)
 
+    logger.info("Starting pipeline for: %s", pdf_path)
+
     structure, raw_text = build_preprocess(pdf_path)
     write_preprocess_outputs(audit_dir, structure, raw_text)
+    logger.info("Preprocessing complete. Pages: %d", structure["auditoria"]["paginas_totais"])
 
     markdown = extract_markdown_docling(pdf_path)
+    logger.info("Text extraction complete. Chars: %d", len(markdown))
 
     first_pass = mask_structured_data(markdown)
     text = first_pass.text
+    logger.info("First privacy pass: %s", first_pass.counts)
 
-    if use_groq:
-        if not groq_api_key:
-            raise ValueError("Groq API key is required when use_groq=True")
-        pieces = [anonymize_names(chunk, groq_api_key) for chunk in split_text(text, GROQ_CHUNK_CHARS)]
+    if config.use_groq:
+        logger.info("Running Groq name anonymization...")
+        chunks = split_text(text, config.groq_chunk_chars)
+        pieces = [anonymize_names(chunk, config.groq_api_key, model=config.groq_model) for chunk in chunks]
         text = "\n\n".join(pieces)
+        logger.info("Groq anonymization complete. %d chunk(s) processed.", len(chunks))
 
     final_pass = mask_structured_data(text)
     final_text = final_pass.text
+    logger.info("Final privacy pass: %s", final_pass.counts)
 
     (audit_dir / "processo_higienizado.md").write_text(final_text, encoding="utf-8")
 
     privacy_audit = {
         "regex_primeira_passada": first_pass.counts,
         "regex_passada_final": final_pass.counts,
-        "groq_usado_para_nomes": use_groq,
-        "tamanho_maximo_por_arquivo_claude": CLAUDE_CONTEXT_CHARS,
+        "groq_usado_para_nomes": config.use_groq,
+        "tamanho_maximo_por_arquivo_claude": config.claude_context_chars,
     }
-    (audit_dir / "auditoria_privacidade.json").write_text(json.dumps(privacy_audit, ensure_ascii=False, indent=2), encoding="utf-8")
+    (audit_dir / "auditoria_privacidade.json").write_text(
+        json.dumps(privacy_audit, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
-    claude_files = _write_claude_pack(final_text, structure, privacy_audit, out)
+    claude_files = _write_claude_pack(final_text, structure, privacy_audit, out, config)
+    logger.info("Pipeline complete. Claude files: %s", claude_files)
 
     return {
         "output_dir": str(out),
