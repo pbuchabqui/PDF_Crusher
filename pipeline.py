@@ -24,17 +24,22 @@ def _mask_chunk(chunk: str) -> dict:
     return {"text": result.text, "counts": result.counts}
 
 
-def _mask_text_parallel(text: str, max_workers: int = 4, chunk_size: int = 50000) -> tuple[str, dict]:
+def _mask_text_parallel(text: str, max_workers: int | None = None, chunk_size: int = 50000) -> tuple[str, dict]:
     """Mask privacy data in parallel chunks for faster processing.
 
     Args:
         text: Full text to mask
-        max_workers: Number of parallel workers
+        max_workers: Number of parallel workers (None = auto-detect CPU cores)
         chunk_size: Size of each chunk in characters
 
     Returns:
         Tuple of (masked_text, aggregated_counts)
     """
+    # Auto-detect number of CPU cores if not specified
+    if max_workers is None:
+        import os
+        max_workers = min(os.cpu_count() or 4, 8)  # Cap at 8 to avoid overhead
+
     # Split into chunks
     chunks = split_text(text, chunk_size)
 
@@ -43,7 +48,7 @@ def _mask_text_parallel(text: str, max_workers: int = 4, chunk_size: int = 50000
         result = mask_structured_data(text)
         return result.text, result.counts
 
-    logger.info(f"Masking {len(chunks)} chunks in parallel (max_workers={max_workers})...")
+    logger.info(f"Masking {len(chunks)} chunks in parallel (workers={max_workers}, CPU cores available)...")
     start_time = time.time()
 
     # Process chunks in parallel
@@ -249,7 +254,7 @@ def run_pipeline(
     # Step 3: First privacy pass (parallel if text is large)
     step_start = time.time()
     if len(markdown) > 100000:  # Only parallelize large documents
-        text, first_pass_counts = _mask_text_parallel(markdown, max_workers=4)
+        text, first_pass_counts = _mask_text_parallel(markdown)
         logger.info("First privacy pass (parallel): %s (%.1fs)", first_pass_counts, time.time() - step_start)
     else:
         first_pass = mask_structured_data(markdown)
@@ -270,7 +275,7 @@ def run_pipeline(
     # Step 5: Final privacy pass (parallel if text is large)
     step_start = time.time()
     if len(text) > 100000:  # Only parallelize large documents
-        final_text, final_pass_counts = _mask_text_parallel(text, max_workers=4)
+        final_text, final_pass_counts = _mask_text_parallel(text)
         logger.info("Final privacy pass (parallel): %s (%.1fs)", final_pass_counts, time.time() - step_start)
     else:
         final_pass = mask_structured_data(text)

@@ -12,20 +12,6 @@ from pypdf import PdfReader
 logger = logging.getLogger(__name__)
 
 
-def _detect_device() -> str:
-    """Detect GPU availability for faster processing."""
-    try:
-        import torch
-        if torch.cuda.is_available():
-            device = "cuda"
-            logger.info("GPU detected: Using CUDA for Docling (%.1fx speedup expected)", 5.0)
-            return device
-    except ImportError:
-        pass
-    logger.info("GPU not available: Using CPU (install torch for GPU acceleration)")
-    return "cpu"
-
-
 def _validate_pdf(path: Path) -> None:
     if not path.exists():
         raise FileNotFoundError(f"PDF not found: {path}")
@@ -78,7 +64,6 @@ def extract_markdown_docling(pdf_path: str | Path) -> str:
         from docling.document_converter import DocumentConverter, PdfFormatOption
 
         start_time = time.time()
-        device = _detect_device()
 
         pipeline_options = PdfPipelineOptions()
         pipeline_options.do_ocr = False
@@ -93,8 +78,8 @@ def extract_markdown_docling(pdf_path: str | Path) -> str:
         markdown = result.document.export_to_markdown()
 
         elapsed = time.time() - start_time
-        logger.info("Docling extraction successful: %d chars (%.1f seconds, device=%s)",
-                   len(markdown), elapsed, device)
+        logger.info("Docling extraction successful: %d chars (%.1f seconds)",
+                   len(markdown), elapsed)
         return markdown
 
     except Exception as exc:
