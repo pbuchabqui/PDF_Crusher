@@ -53,6 +53,75 @@ def extract_page_texts(pdf_path: str | Path) -> list[str]:
     return texts
 
 
+def detect_scanned_pages(result_document: Any, text_threshold: int = 100, max_pages: int = 100) -> list[int]:
+    """Detect pages that likely need OCR (have very little extracted text).
+
+    Args:
+        result_document: DoclingDocument from first pass (no OCR)
+        text_threshold: Minimum characters to consider page "ok"
+        max_pages: Maximum pages to process with OCR
+
+    Returns:
+        List of page indices that need OCR
+    """
+    scanned = []
+    try:
+        for page_num, page in enumerate(result_document.pages):
+            text_length = len(page.export_to_text().strip())
+            if text_length < text_threshold:
+                scanned.append(page_num)
+                if len(scanned) >= max_pages:
+                    break
+        logger.info(f"Detected {len(scanned)} pages needing OCR (threshold: {text_threshold} chars)")
+    except Exception as e:
+        logger.warning(f"Error detecting scanned pages: {e}")
+    return scanned
+
+
+def _merge_documents_hybrid(result_fast: Any, result_ocr: Any, scanned_page_indices: list[int]) -> Any:
+    """Merge fast extraction with selective OCR results.
+
+    Uses OCR results only for identified scanned pages, keeping original extraction for others.
+
+    Args:
+        result_fast: Conversion result without OCR
+        result_ocr: Conversion result with OCR (may be full document)
+        scanned_page_indices: List of page numbers that were OCR'd
+
+    Returns:
+        Merged DoclingDocument with best content for each page
+    """
+    if not scanned_page_indices:
+        return result_fast.document
+
+    try:
+        merged_pages = []
+        scanned_set = set(scanned_page_indices)
+
+        for page_num, page_fast in enumerate(result_fast.document.pages):
+            if page_num in scanned_set and hasattr(result_ocr, "document"):
+                try:
+                    if page_num < len(result_ocr.document.pages):
+                        page_ocr = result_ocr.document.pages[page_num]
+                        if len(page_ocr.export_to_text().strip()) > len(page_fast.export_to_text().strip()):
+                            merged_pages.append(page_ocr)
+                        else:
+                            merged_pages.append(page_fast)
+                    else:
+                        merged_pages.append(page_fast)
+                except Exception:
+                    merged_pages.append(page_fast)
+            else:
+                merged_pages.append(page_fast)
+
+        result_fast.document.pages = merged_pages
+        return result_fast.document
+
+    except Exception as e:
+        logger.warning(f"Error merging documents, returning fast version: {e}")
+        return result_fast.document
+
+
 def extract_markdown_docling(pdf_path: str | Path) -> str:
     """Extract Markdown from PDF via Docling. Falls back to pypdf plain text on failure."""
     path = Path(pdf_path)
@@ -92,3 +161,94 @@ def extract_markdown_docling(pdf_path: str | Path) -> str:
         )
         logger.info("Fallback plain-text extraction: %d chars", len(fallback))
         return fallback
+
+
+def extract_markdown_hybrid_ocr(pdf_path: str | Path, text_threshold: int = 100) -> str:
+    """Extract with Hybrid OCR: fast pass + selective OCR on scanned pages.
+
+    Two-pass approach:
+    1. Fast extraction without OCR
+    2. Detect pages with little text (likely scanned)
+    3. OCR only those pages
+    4. Merge results
+
+    For 3000 pages: expects 7-15 minutes total (vs 60+ with full OCR)
+
+    Args:
+        pdf_path: Path to PDF file
+        text_threshold: Minimum characters per page to skip OCR
+
+    Returns:
+        Markdown string with extracted content
+    """
+    path = Path(pdf_path)
+    _validate_pdf(path)
+
+    try:
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import PdfPipelineOptions
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+
+        total_start = time.time()
+
+        logger.info("=== Hybrid OCR Extraction Started ===")
+
+        # PASS 1: Fast extraction without OCR
+        logger.info("Pass 1: Fast extraction (no OCR)...")
+        pass1_start = time.time()
+
+        options_fast = PdfPipelineOptions()
+        options_fast.do_ocr = False
+        options_fast.do_table_structure = False
+
+        converter_fast = DocumentConverter(
+            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options_fast)}
+        )
+        result_fast = converter_fast.convert(str(path))
+        elapsed_pass1 = time.time() - pass1_start
+        logger.info(f"Pass 1 complete in {elapsed_pass1:.1f}s")
+
+        # DETECTION: Which pages need OCR?
+        scanned_pages = detect_scanned_pages(result_fast.document, text_threshold=text_threshold)
+
+        # If no pages need OCR, return fast result
+        if not scanned_pages:
+            markdown = result_fast.document.export_to_markdown()
+            total_elapsed = time.time() - total_start
+            logger.info(f"No OCR needed. Hybrid extraction complete in {total_elapsed:.1f}s. "
+                       f"Content: {len(markdown)} chars")
+            return markdown
+
+        # PASS 2: Selective OCR on scanned pages
+        logger.info(f"Pass 2: OCR on {len(scanned_pages)} pages...")
+        pass2_start = time.time()
+
+        options_ocr = PdfPipelineOptions()
+        options_ocr.do_ocr = True
+        options_ocr.do_table_structure = False
+
+        converter_ocr = DocumentConverter(
+            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options_ocr)}
+        )
+        result_ocr = converter_ocr.convert(str(path))
+        elapsed_pass2 = time.time() - pass2_start
+        logger.info(f"Pass 2 complete in {elapsed_pass2:.1f}s")
+
+        # MERGE: Combine results
+        logger.info("Merging extraction results...")
+        merged_doc = _merge_documents_hybrid(result_fast, result_ocr, scanned_pages)
+
+        markdown = merged_doc.export_to_markdown()
+        total_elapsed = time.time() - total_start
+
+        logger.info(f"=== Hybrid extraction complete ===")
+        logger.info(f"Total time: {total_elapsed:.1f}s "
+                   f"(Pass1: {elapsed_pass1:.1f}s, Pass2: {elapsed_pass2:.1f}s, "
+                   f"OCR pages: {len(scanned_pages)})")
+        logger.info(f"Extracted: {len(markdown)} chars")
+
+        return markdown
+
+    except Exception as exc:
+        logger.warning(f"Hybrid OCR extraction failed ({exc}). Falling back to standard Docling...")
+        return extract_markdown_docling(path)

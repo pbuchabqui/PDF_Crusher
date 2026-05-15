@@ -11,7 +11,7 @@ from pathlib import Path
 from chunker import split_text
 from config import PipelineConfig
 from groq_anonymizer import anonymize_names
-from pdf_engine import extract_markdown_docling
+from pdf_engine import extract_markdown_docling, extract_markdown_hybrid_ocr
 from preprocess import build_preprocess, write_preprocess_outputs
 from privacy_engine import mask_structured_data
 
@@ -246,9 +246,9 @@ def run_pipeline(
     logger.info("Preprocessing complete. Pages: %d (%.1fs)",
                structure["auditoria"]["paginas_totais"], time.time() - step_start)
 
-    # Step 2: Extract text with Docling (most expensive step)
+    # Step 2: Extract text with Hybrid OCR (most expensive step)
     step_start = time.time()
-    markdown = extract_markdown_docling(pdf_path)
+    markdown = extract_markdown_hybrid_ocr(pdf_path)
     logger.info("Text extraction complete. Chars: %d (%.1fs)", len(markdown), time.time() - step_start)
 
     # Step 3: First privacy pass (parallel if text is large)
