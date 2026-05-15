@@ -79,32 +79,74 @@ def render_header() -> None:
 # ── Upload & Configuration ────────────────────────────────────────────────────
 
 def render_upload_panel() -> dict:
-    """Render the upload form. Returns widget values as a dict."""
+    """Render the upload form with enhanced privacy and output options. Returns widget values as a dict."""
     uploaded = st.file_uploader(
         "Selecione o PDF jurídico",
         type=["pdf"],
         help="Apenas arquivos .pdf são aceitos.",
     )
 
-    st.markdown("**Opções de privacidade**")
-    use_groq = st.checkbox(
-        "Usar Groq para anonimizar nomes de pessoas",
-        value=False,
-        help="Além das máscaras regex locais (CPF, CNPJ, e-mail, telefone), envia o texto já mascarado ao Groq para substituir nomes por [NOME_ANONIMIZADO].",
-    )
+    with st.expander("⚙️ Opções de Privacidade e Conformidade", expanded=False):
+        st.markdown("**Anonimização de Dados Pessoais**")
+        use_groq = st.checkbox(
+            "Usar Groq para anonimizar nomes de pessoas",
+            value=False,
+            help="Além das máscaras regex locais (CPF, CNPJ, e-mail, telefone, RG, CNH, PIS/PASEP), "
+                 "envia o texto já mascarado ao Groq para substituir nomes por [NOME_ANONIMIZADO].",
+        )
 
-    groq_key = None
-    if use_groq:
-        with st.container(border=True):
-            groq_key = st.text_input(
-                "Groq API Key",
-                type="password",
-                placeholder="gsk_...",
-            )
-            st.caption(
-                "Modelo: `llama-3.3-70b-versatile` · chunks de 30.000 chars · "
-                "até 3 tentativas com backoff · timeout de 60 s por chunk"
-            )
+        groq_key = None
+        if use_groq:
+            with st.container(border=True):
+                groq_key = st.text_input(
+                    "Groq API Key",
+                    type="password",
+                    placeholder="gsk_...",
+                    help="Formato esperado: gsk_ seguido de 20+ caracteres alfanuméricos",
+                )
+                st.caption(
+                    "Modelo: `llama-3.3-70b-versatile` · chunks de 30.000 chars · "
+                    "até 3 tentativas com backoff · timeout de 60 s por chunk"
+                )
+        
+        st.divider()
+        st.markdown("**Conformidade LGPD**")
+        data_residency = st.selectbox(
+            "Residência de Dados",
+            options=["brazil", "us", "eu"],
+            index=0,
+            help="Define onde os dados processados devem residir para conformidade com regulamentações locais.",
+        )
+        
+        retention_days = st.number_input(
+            "Dias de Retenção",
+            min_value=1,
+            max_value=3650,
+            value=None,
+            placeholder="Indefinido",
+            help="Número máximo de dias para reter os dados processados. Deixe em branco para retenção indefinida.",
+        )
+        
+        enable_audit = st.checkbox(
+            "Habilitar Logs de Auditoria",
+            value=True,
+            help="Registra todas as operações em logs detalhados para rastreabilidade.",
+        )
+
+    with st.expander("📤 Opções de Exportação", expanded=False):
+        output_format = st.selectbox(
+            "Formato de Saída",
+            options=["markdown", "json", "html", "txt"],
+            index=0,
+            help="Formato dos arquivos exportados.",
+        )
+        
+        language = st.selectbox(
+            "Idioma",
+            options=["pt-BR", "en", "es"],
+            index=0,
+            help="Idioma preferencial para processamento e saída.",
+        )
 
     submitted = st.button(
         "▶ Processar PDF",
@@ -113,7 +155,17 @@ def render_upload_panel() -> dict:
         use_container_width=True,
     )
 
-    return {"uploaded": uploaded, "use_groq": use_groq, "groq_key": groq_key, "submitted": submitted}
+    return {
+        "uploaded": uploaded,
+        "use_groq": use_groq,
+        "groq_key": groq_key,
+        "submitted": submitted,
+        "data_residency": data_residency,
+        "retention_days": retention_days,
+        "enable_audit_log": enable_audit,
+        "output_format": output_format,
+        "language": language,
+    }
 
 
 # ── Processing feedback ───────────────────────────────────────────────────────
@@ -220,23 +272,57 @@ def render_privacy_summary(privacy_audit: dict) -> None:
     first = privacy_audit["regex_primeira_passada"]
     final = privacy_audit["regex_passada_final"]
     groq_used = privacy_audit["groq_usado_para_nomes"]
+    
+    # Calculate totals for all PII types
+    total_cpf = first.get("cpf", 0) + final.get("cpf", 0)
+    total_cnpj = first.get("cnpj", 0) + final.get("cnpj", 0)
+    total_email = first.get("email", 0) + final.get("email", 0)
+    total_telefone = first.get("telefone", 0) + final.get("telefone", 0)
+    total_rg = first.get("rg", 0) + final.get("rg", 0)
+    total_cnh = first.get("cnh", 0) + final.get("cnh", 0)
+    total_pis = first.get("pis_pasep", 0) + final.get("pis_pasep", 0)
+    total_cep = first.get("cep", 0) + final.get("cep", 0)
 
     with st.container(border=True):
         st.markdown("**Dados pessoais mascarados**")
-        c1, c2, c3, c4, c5 = st.columns(5)
+        
+        # First row - Core identifiers
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
-            st.metric("CPF", first["cpf"] + final["cpf"], help="Substituídos por [CPF_ANONIMIZADO]")
+            st.metric("CPF", total_cpf, help="Substituídos por [CPF_ANONIMIZADO]")
         with c2:
-            st.metric("CNPJ", first["cnpj"] + final["cnpj"], help="Substituídos por [CNPJ_ANONIMIZADO]")
+            st.metric("CNPJ", total_cnpj, help="Substituídos por [CNPJ_ANONIMIZADO]")
         with c3:
-            st.metric("E-mail", first["email"] + final["email"], help="Substituídos por [EMAIL_ANONIMIZADO]")
+            st.metric("RG", total_rg, help="Substituídos por [RG_ANONIMIZADO]")
         with c4:
-            st.metric("Telefone", first["telefone"] + final["telefone"], help="Substituídos por [TELEFONE_ANONIMIZADO]")
+            st.metric("CNH", total_cnh, help="Substituídos por [CNH_ANONIMIZADA]")
+        
+        # Second row - Contact and other identifiers
+        c5, c6, c7, c8 = st.columns(4)
         with c5:
+            st.metric("E-mail", total_email, help="Substituídos por [EMAIL_ANONIMIZADO]")
+        with c6:
+            st.metric("Telefone", total_telefone, help="Substituídos por [TELEFONE_ANONIMIZADO]")
+        with c7:
+            st.metric("PIS/PASEP", total_pis, help="Substituídos por [PIS_PASEP_ANONIMIZADO]")
+        with c8:
+            st.metric("CEP", total_cep, help="Substituídos por [CEP_ANONIMIZADO]")
+        
+        # Third row - Groq and summary
+        st.divider()
+        c9, c10 = st.columns(2)
+        with c9:
             st.metric(
                 "Groq (nomes)",
                 "Sim" if groq_used else "Não",
                 help="Se Sim, nomes de pessoas foram substituídos por [NOME_ANONIMIZADO]",
+            )
+        with c10:
+            total_all = total_cpf + total_cnpj + total_email + total_telefone + total_rg + total_cnh + total_pis + total_cep
+            st.metric(
+                "Total de Máscaras",
+                total_all,
+                help="Total geral de dados pessoais mascarados",
             )
 
 

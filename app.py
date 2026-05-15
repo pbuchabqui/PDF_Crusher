@@ -62,6 +62,15 @@ if st.session_state.state == "idle":
     form = ui.render_upload_panel()
 
     if form["submitted"] and form["uploaded"] is not None:
+        # Validate Groq API key format if enabled
+        if form["use_groq"] and form["groq_key"]:
+            import re
+            groq_pattern = re.compile(r"^gsk_[A-Za-z0-9]{20,}$")
+            if not groq_pattern.match(form["groq_key"]):
+                st.error("Formato inválido de Groq API Key. Esperado: gsk_ seguido de 20+ caracteres alfanuméricos.")
+                form["use_groq"] = False
+                form["groq_key"] = None
+        
         error = _validate_upload(form["uploaded"], form["use_groq"], form["groq_key"])
         if error:
             st.error(error)
@@ -79,6 +88,15 @@ if st.session_state.state == "idle":
                 use_groq=form["use_groq"],
                 groq_api_key=form["groq_key"] or None,
             )
+            
+            # Store compliance settings in session state for audit
+            st.session_state.compliance_settings = {
+                "data_residency": form.get("data_residency", "brazil"),
+                "retention_days": form.get("retention_days"),
+                "enable_audit_log": form.get("enable_audit_log", True),
+                "output_format": form.get("output_format", "markdown"),
+                "language": form.get("language", "pt-BR"),
+            }
 
             with st.spinner("Processando PDF — aguarde..."):
                 ui.render_processing_steps(form["use_groq"])
