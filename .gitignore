@@ -1,10 +1,36 @@
-.env
-venv/
-__pycache__/
+```gitignore
+# Compiled Python files
 *.pyc
-outputs/
-temp/
-*.pdf
-*.docx
-*.xlsx
-*.csv
+__pycache__/
+
+# Virtual environments
+venv/
+.venv/
+.env
+.env.local
+*.env.*
+
+# Logs
+*.log
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# Build/dist directories
+dist/
+build/
+target/
+
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+
+# Python cache
+.mypy_cache/
+.pytest_cache/
+```
